@@ -8,9 +8,9 @@ nvocation traces in X-Ray
 1. In the `serverless.yml` under the `provider` section, add the following:
 
 ```yml
-  tracing:
-    apiGateway: true
-    lambda: true
+tracing:
+  apiGateway: true
+  lambda: true
 ```
 
 2. Add the following back to the `provider` section:
@@ -25,21 +25,29 @@ iamRoleStatements:
       - "*"
 ```
 
-This enables X-Ray tracing for all the functions in this project. However, we still need to give each function the IAM permission for `xray:PutTraceSegments` and `xray:PutTelemetryRecords`.
-
-The `provider` section should now look like this
+**IMPORTANT** this should be aligned with `provider.tracing` and `provider.environment`. e.g.
 
 ```yml
 provider:
   name: aws
   runtime: nodejs12.x
-
+  stage: dev
   environment:
     LOG_LEVEL: ${self:custom.logLevel.${self:custom.stage}, self:custom.logLevel.default}
+    SAMPLE_DEBUG_LOG_RATE: 0.1
   tracing:
     apiGateway: true
     lambda: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
 ```
+
+This enables X-Ray tracing for all the functions in this project. However, we still need to give each function the IAM permission for `xray:PutTraceSegments` and `xray:PutTelemetryRecords`.
 
 And we need the functions to inherit the permissions from this default IAM role.
 
@@ -51,19 +59,6 @@ serverless-iam-roles-per-function:
 ```
 
 This is courtesy of the `serverless-iam-roles-per-function` plugin, and lets you easily share common permissions that all functions should have.
-
-The `custom` section should look like this after the change
-
-```yml
-custom:
-  stage: ${opt:stage, self:provider.stage}
-  logLevel:
-    prod: INFO
-    default: DEBUG
-
-  serverless-iam-roles-per-function:
-    defaultInherit: true
-```
 
 4. Deploy the project
 
@@ -119,6 +114,20 @@ const AWS = AWSXRay.captureAWS(require('aws-sdk'))
 
 ![](/images/mod21-007.png)
 
+6. Now, let's apply the **single most effective performance optimize** for a Node.js function :-)
+
+Add the following environment variable to `provider.environment`:
+
+```yml
+AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+```
+
+and redeploy
+
+`npm run sls -- deploy -s dev -r us-east-1`
+
+7. Reload the homepage a couple of times, and look at the traces for the `get-restaurants` function. Notice how much faster the subsequent invocations are? That's because we just enabled HTTP keep-alive in the Node.js AWS SDK (which is disabled by default).
+
 </p></details>
 
 <details>
@@ -132,56 +141,14 @@ Then it's proper distributed tracing! It's not very helpful if you're restricted
 
 Fortunately, you can instrument the built-in `https` module with the X-Ray SDK, unfortunately, you have to use it instead of other HTTP clients..
 
-1. Modify `functions/get-index.js` and replace 
-
-`const http = require('superagent-promise')(require('superagent'), Promise)`
-
-with 
+1. Modify `functions/get-index.js` and add the following to the **top of the file**
 
 ```javascript
 const AWSXRay = require('aws-xray-sdk-core')
-const https = AWSXRay.captureHTTPs(require('https'))
-const URL = require('url')
+AWSXRay.captureHTTPsGlobal(require('https'))
 ```
 
-2. Modify `functions/get-index.js` and replace the `getRestaurants` function with the following
-
-```javascript
-const getRestaurants = async () => {
-  const url = URL.parse(restaurantsApiRoot)
-  const opts = {
-    host: url.hostname, 
-    path: url.pathname
-  }
-
-  aws4.sign(opts)
-
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: url.hostname,
-      port: 443,
-      path: url.pathname,
-      method: 'GET',
-      headers: opts.headers
-    }
-
-    const req = https.request(options, res => {
-      res.on('data', buffer => {
-        const body = buffer.toString('utf8')
-        resolve(JSON.parse(body))
-      })
-    })
-
-    req.on('error', err => reject(err))
-
-    req.end()
-  })
-}
-```
-
-It uses the `https` module to make the HTTP request to the `/restaurants` endpoint instead.
-
-3. Deploy the project
+2. Deploy the project
 
 `npm run sls -- deploy -s dev -r us-east-1`
 
@@ -226,21 +193,21 @@ Rerun the integration tests, and the tests are still broken, with errors like th
 
 Go back to `functions/get-index.js` and replace
 
-`const https = AWSXRay.captureHTTPs(require('https'))`
+`AWSXRay.captureHTTPsGlobal(require('https'))`
 
 with 
 
 ```javascript
-const https = process.env.LAMBDA_RUNTIME_DIR
-  ? AWSXRay.captureHTTPs(require('https'))
-  : require('https')
+if (process.env.LAMBDA_RUNTIME_DIR) {
+  AWSXRay.captureHTTPsGlobal(require('https'))
+}
 ```
 
 3. Similarly, modify `functions/get-restaurants.js` and replace
 
 `const AWS = AWSXRay.captureAWS(require('aws-sdk'))`
 
-with 
+with
 
 ```javascript
 const AWS = process.env.LAMBDA_RUNTIME_DIR

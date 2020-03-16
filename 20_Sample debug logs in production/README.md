@@ -102,3 +102,40 @@ and see that all the tests are now passing
 `npm run sls -- deploy -s dev -r us-east-1`
 
 </p></details>
+
+<details>
+<summary><b>Configure the default sample rate</b></summary><p>
+
+1. If you change the default log level to `INFO`, i.e. in the `serverless.yml`, change `custom.logLevel` to:
+
+```yml
+logLevel:
+  prod: ERROR
+  default: INFO
+```
+
+then redeploy
+
+`npm run sls -- deploy -s dev -r us-east-1`
+
+2. Now reload the homepage a few times and you'll notice that you no longer see the debug log messages in the `get-index` and `get-restaurants` functions' logs.
+
+This is because by default the `@dazn/lambda-powertools-pattern-basic` wrapper configures the debug logs sample rate to be 1% based on industry average.
+
+Now, try turning this up to say, 10%, by adding a `SAMPLE_DEBUG_LOG_RATE` environment variable.
+
+In `serverless.yml`, change `provider.environment` to:
+
+```yml
+environment:
+  LOG_LEVEL: ${self:custom.logLevel.${self:custom.stage}, self:custom.logLevel.default}
+  SAMPLE_DEBUG_LOG_RATE: 0.1
+```
+
+then redeploy
+
+`npm run sls -- deploy -s dev -r us-east-1`
+
+3. Now reload the homepage a few more times, and you should see debug log messages in the logs for the `get-index` and `get-restaurants` functions.
+
+</p></details>
