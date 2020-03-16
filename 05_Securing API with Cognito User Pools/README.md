@@ -179,7 +179,7 @@ get-index:
 ```javascript
 const fs = require("fs")
 const Mustache = require('mustache')
-const http = require('superagent-promise')(require('superagent'), Promise)
+const http = require('axios')
 const aws4 = require('aws4')
 const URL = require('url')
 
@@ -211,13 +211,10 @@ const getRestaurants = async () => {
 
   aws4.sign(opts)
 
-  return (await http
-    .get(restaurantsApiRoot)
-    .set('Host', opts.headers['Host'])
-    .set('X-Amz-Date', opts.headers['X-Amz-Date'])
-    .set('Authorization', opts.headers['Authorization'])
-    .set('X-Amz-Security-Token', opts.headers['X-Amz-Security-Token'])
-  ).body
+  const httpReq = http.get(restaurantsApiRoot, {
+    headers: opts.headers
+  })
+  return (await httpReq).data
 }
 
 module.exports.handler = async (event, context) => {
